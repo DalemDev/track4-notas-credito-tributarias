@@ -1,0 +1,7 @@
+numero_titulo,existe_en_sri,estado_titulo,saldo_disponible_sri,bloqueo,motivo_bloqueo
+SRI-NC-88231,si,vigente,45230.50,no,
+SRI-NC-88450,si,vigente,9600.00,no,
+SRI-NC-90112,si,vigente,78900.00,no,
+SRI-NC-91387,si,vigente,15200.00,no,
+SRI-NC-92004,si,bloqueada,33750.00,si,Proceso de auditoria tributaria en curso
+SRI-NC-93215,si,vigente,8900.00,no,

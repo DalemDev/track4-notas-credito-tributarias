@@ -1,0 +1,8 @@
+ruc,titular,numero_titulo_anterior,dato,valor_dato,fecha_validacion,fuente,estado
+1791234567001,Comercial Andina S.A.,SRI-NC-77120,cuenta_bancaria,Banco Pichincha - 220456789,2026-05-14,Validacion manual anterior,confiable
+1791234567001,Comercial Andina S.A.,SRI-NC-77120,contacto_autorizado,Maria Jose Salazar - Gerente Financiera,2026-05-14,Validacion manual anterior,confiable
+0992345678001,Grupo Sierra Verde Cia. Ltda.,SRI-NC-81004,cuenta_bancaria,Banco Guayaquil - 990123456,2026-06-02,Validacion manual anterior,confiable
+0992345678001,Grupo Sierra Verde Cia. Ltda.,SRI-NC-81004,representante_legal,Carlos Andrade Pico,2026-06-02,Validacion manual anterior,confiable
+1793456789001,Importadora Pacifico S.A.,SRI-NC-85990,cuenta_bancaria,Produbanco - 340098765,2026-06-20,Validacion manual anterior,requiere_revision
+1793456789001,Importadora Pacifico S.A.,SRI-NC-85990,contacto_autorizado,Diego Mora Endara - Apoderado,2026-06-20,Validacion manual anterior,confiable
+1794567890001,Textiles del Norte S.A.,SRI-NC-86500,cuenta_bancaria,Banco Pacifico - 110987654,2026-06-25,Validacion manual anterior,confiable
