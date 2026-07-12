@@ -36,7 +36,7 @@ def test_guardrail_descarta_indice_fuera_de_rango(monkeypatch):
         {"indice": 2, "es_relevante": True, "razon": "índice inventado, fuera de rango"},
     ]})
     monkeypatch.setattr(services.anthropic, "Anthropic", lambda api_key: _ClienteFalso(respuesta_falsa))
-    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, ya_vistos: [CANDIDATO_FALSO])
+    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, antecedentes, ya_vistos: [CANDIDATO_FALSO])
 
     resultado = services.buscar_coincidencias_aproximadas("Empresa Parecida SA", [])
     assert resultado == []
@@ -48,7 +48,7 @@ def test_guardrail_acepta_indice_valido_y_relevante(monkeypatch):
         {"indice": 0, "es_relevante": True, "razon": "mismo nombre con variación menor"},
     ]})
     monkeypatch.setattr(services.anthropic, "Anthropic", lambda api_key: _ClienteFalso(respuesta_falsa))
-    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, ya_vistos: [CANDIDATO_FALSO])
+    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, antecedentes, ya_vistos: [CANDIDATO_FALSO])
 
     resultado = services.buscar_coincidencias_aproximadas("Empresa Parecida SA", [])
     assert len(resultado) == 1
@@ -62,7 +62,7 @@ def test_guardrail_descarta_si_no_es_relevante(monkeypatch):
         {"indice": 0, "es_relevante": False, "razon": "nombre distinto, coincidencia irrelevante"},
     ]})
     monkeypatch.setattr(services.anthropic, "Anthropic", lambda api_key: _ClienteFalso(respuesta_falsa))
-    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, ya_vistos: [CANDIDATO_FALSO])
+    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, antecedentes, ya_vistos: [CANDIDATO_FALSO])
 
     resultado = services.buscar_coincidencias_aproximadas("Empresa Parecida SA", [])
     assert resultado == []
@@ -72,7 +72,7 @@ def test_sin_candidatos_no_llama_a_claude(monkeypatch):
     """Sin candidatos recuperados por similitud, nunca se llama a Claude —
     la ausencia de retrieval implica ausencia total de generación."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-clave-de-prueba")
-    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, ya_vistos: [])
+    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, antecedentes, ya_vistos: [])
 
     def _no_deberia_llamarse(**kwargs):
         raise AssertionError("no debería llamarse a Claude sin candidatos recuperados")
@@ -88,7 +88,7 @@ def test_sin_candidatos_no_llama_a_claude(monkeypatch):
 
 def test_sin_api_key_no_muestra_coincidencias_aproximadas(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, ya_vistos: [CANDIDATO_FALSO])
+    monkeypatch.setattr(services, "_candidatos_por_similitud", lambda titular, antecedentes, ya_vistos: [CANDIDATO_FALSO])
 
     resultado = services.buscar_coincidencias_aproximadas("Empresa Parecida SA", [])
     assert resultado == []

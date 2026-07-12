@@ -57,6 +57,10 @@ def a_float(valor, default=0.0):
         return default
 
 
+def ir_al_paso(indice):
+    st.session_state.paso_actual = indice
+
+
 def render_stepper(pasos, indice_actual):
     """Barra de pasos horizontal (lo más cercano a un 'stepper' con los
     componentes nativos de Streamlit): un círculo por paso, conectados por una
@@ -91,13 +95,13 @@ def render_stepper(pasos, indice_actual):
 
 
 # Mapea el estado del expediente (fuente de verdad: el backend) a un índice de
-# paso (0-based) del stepper y un mensaje en lenguaje natural sobre qué hacer.
+# paso (0-based) y un mensaje en lenguaje natural sobre qué hacer.
 PASOS_STEPPER = ["Antecedentes", "Validación SRI", "Negociación", "Cierre"]
 PASO_POR_ESTADO = {
-    "ingresado": (0, "Revisa los antecedentes reutilizables sugeridos en el Paso 1 y confirma, edita o rechaza cada uno."),
-    "datos_confirmados": (1, "Datos confirmados. Corre la validación contra el SRI en el Paso 2."),
-    "validado": (2, "Caso validado. Genera el borrador de la ficha de negociación en el Paso 3."),
-    "pendiente_de_aprobacion": (2, "Borrador generado. Revísalo y apruébalo en el Paso 3."),
+    "ingresado": (0, "Revisa los antecedentes reutilizables sugeridos y confirma, edita o rechaza cada uno."),
+    "datos_confirmados": (1, "Datos confirmados. Corre la validación contra el SRI."),
+    "validado": (2, "Caso validado. Genera el borrador de la ficha de negociación."),
+    "pendiente_de_aprobacion": (2, "Borrador generado. Revísalo y apruébalo."),
     "aprobado_pendiente_liquidacion": (3, "Caso aprobado. La liquidación, transferencia o endoso quedan pendientes como acción manual regulada — no se ejecutan en esta demo."),
 }
 
@@ -174,6 +178,7 @@ with st.expander("Crear caso nuevo desde un documento", expanded=not casos):
                 st.session_state.pop("documento_nombre", None)
                 st.session_state.pop("archivo_procesado_id", None)
                 st.session_state.caso_recien_creado = nuevo_caso["caso_id"]
+                st.session_state.paso_actual = 0
                 st.toast(f"Caso {nuevo_caso['caso_id']} creado.")
                 st.rerun()
 
@@ -201,181 +206,204 @@ seleccion = st.sidebar.selectbox("Selecciona un caso", etiquetas, index=indice_d
 caso_id = opciones[seleccion]
 caso = next(c for c in casos if c["caso_id"] == caso_id)
 
+expediente = get(f"/expediente/{caso_id}")
+indice_sugerido, mensaje_guia = PASO_POR_ESTADO.get(
+    expediente["estado"], (0, "Comienza revisando los antecedentes reutilizables.")
+)
+
+# Al cambiar de caso, la vista salta al paso donde ese caso realmente está.
+# Dentro del mismo caso, el operador puede navegar libremente con
+# Anterior/Siguiente sin que eso altere el estado real del backend.
 if "caso_actual" not in st.session_state or st.session_state.caso_actual != caso_id:
     st.session_state.decisiones = {}
     st.session_state.caso_actual = caso_id
+    st.session_state.paso_actual = indice_sugerido
 
-expediente = get(f"/expediente/{caso_id}")
-indice_paso, mensaje_guia = PASO_POR_ESTADO.get(
-    expediente["estado"], (0, "Comienza revisando los antecedentes reutilizables en el Paso 1.")
-)
+paso_actual = st.session_state.get("paso_actual", indice_sugerido)
 
 st.sidebar.divider()
 st.sidebar.subheader("Progreso del caso")
-st.sidebar.progress((indice_paso + 1) / len(PASOS_STEPPER), text=PASOS_STEPPER[indice_paso])
+st.sidebar.progress((indice_sugerido + 1) / len(PASOS_STEPPER), text=PASOS_STEPPER[indice_sugerido])
 st.sidebar.caption(f"Estado interno: `{expediente['estado']}`")
 
-render_stepper(PASOS_STEPPER, indice_paso)
+with st.sidebar.expander("Expediente e historial"):
+    st.write(f"**Estado actual:** {expediente['estado']}")
+    for evento in expediente["historial"]:
+        st.write(f"- {evento['evento']}" + (f" — {evento['detalle']}" if evento.get("detalle") else ""))
+
+render_stepper(PASOS_STEPPER, paso_actual)
 st.info(f"**Siguiente acción sugerida:** {mensaje_guia}")
 
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Paso 1 — HU1: ingreso asistido y reutilización de antecedentes
+# Contenido del paso actual — se muestra SOLO el paso en el que está el
+# operador, para evitar tener que hacer scroll por todo el flujo.
 # ---------------------------------------------------------------------------
 
-st.header("Paso 1 — Ingreso asistido y antecedentes")
-st.caption(
-    "Estos son los datos recibidos del caso y las coincidencias de casos anteriores por RUC o número "
-    "de título. Ningún dato se guarda hasta que lo confirmes, edites o rechaces explícitamente."
-)
-
-col_datos, col_antecedentes = st.columns(2)
-
-with col_datos:
-    with st.container(border=True):
-        st.subheader("Datos de la nota de crédito")
-        st.write(f"**Titular:** {caso['titular']}")
-        st.write(f"**RUC:** {caso['ruc']}")
-        st.write(f"**Número de título:** {caso['numero_titulo']}")
-        st.write(f"**Tipo de nota:** {caso['tipo_nota']}")
-        st.write(f"**Valor nominal:** {caso['valor_nominal']}")
-        st.write(f"**Saldo declarado:** {caso['saldo']}")
-        st.caption(f"Ingresado el {caso.get('fecha_ingreso', 'N/D')} · Documento: {caso.get('documento_respaldo', 'N/D')}")
-
-with col_antecedentes:
-    with st.container(border=True):
-        st.subheader("Antecedentes reutilizables")
-        antecedentes = get(f"/casos/{caso_id}/antecedentes")
-
-        if not antecedentes:
-            st.info(
-                "Sin coincidencias previas por RUC o número de título. Se ingresa como caso nuevo — "
-                "puedes continuar directamente al Paso 2."
-            )
-        else:
-            for a in antecedentes:
-                with st.container(border=True):
-                    if a.get("tipo_coincidencia") == "aproximada":
-                        st.markdown(
-                            f":blue[**Coincidencia aproximada (IA)**] — {a.get('similitud', '?')}% de similitud "
-                            f"con **{a['titular']}** (RUC {a['ruc']})"
-                        )
-                        st.caption(f"Razón: {a.get('razon', 'sin detalle')}")
-                    else:
-                        st.markdown(":green[**Coincidencia exacta**]")
-                    st.write(f"**{a['dato']}**: {a['valor_dato']}")
-                    st.caption(f"Fecha: {a['fecha_validacion']} · Fuente: {a['fuente']} · Estado: {a['estado']}")
-                    accion = st.radio(
-                        "Acción del operador",
-                        ["confirmar", "editar", "rechazar"],
-                        horizontal=True,
-                        key=f"accion_{caso_id}_{a['dato']}",
-                        help="Confirmar guarda el valor tal cual. Editar te deja escribir uno nuevo. Rechazar no guarda nada.",
-                    )
-                    valor_final = a["valor_dato"]
-                    if accion == "editar":
-                        valor_final = st.text_input(
-                            "Nuevo valor", value=a["valor_dato"], key=f"valor_{caso_id}_{a['dato']}"
-                        )
-                    st.session_state.decisiones[a["dato"]] = {"accion": accion, "valor_final": valor_final}
-
-            if st.button("Guardar decisiones de antecedentes", type="primary"):
-                decisiones = [
-                    {"dato": dato, "accion": d["accion"], "valor_final": d["valor_final"]}
-                    for dato, d in st.session_state.decisiones.items()
-                ]
-                post(f"/casos/{caso_id}/confirmar", {"decisiones": decisiones})
-                st.toast("Decisiones guardadas en el expediente.")
-                st.rerun()
-
-st.divider()
-
-# ---------------------------------------------------------------------------
-# Paso 2 — HU2: validación y siguiente acción guiada
-# ---------------------------------------------------------------------------
-
-st.header("Paso 2 — Validación contra el SRI")
-with st.container(border=True):
+if paso_actual == 0:
+    # Paso 1 — HU1: ingreso asistido y reutilización de antecedentes
+    st.header("Paso 1 — Ingreso asistido y antecedentes")
     st.caption(
-        "Verifica existencia, saldo, estado y posibles bloqueos contra la fuente simulada del SRI, y "
-        "sugiere el siguiente paso. La decisión final siempre depende del operador."
+        "Estos son los datos recibidos del caso y las coincidencias de casos anteriores por RUC o número "
+        "de título. Ningún dato se guarda hasta que lo confirmes, edites o rechaces explícitamente."
     )
 
-    if expediente["estado"] == "ingresado":
-        st.caption("Sugerencia: confirma primero los antecedentes del Paso 1 (opcional — también puedes validar directamente).")
+    col_datos, col_antecedentes = st.columns(2)
 
-    if st.button("Validar caso"):
-        post(f"/casos/{caso_id}/validar")
-        st.rerun()
+    with col_datos:
+        with st.container(border=True):
+            st.subheader("Datos de la nota de crédito")
+            st.write(f"**Titular:** {caso['titular']}")
+            st.write(f"**RUC:** {caso['ruc']}")
+            st.write(f"**Número de título:** {caso['numero_titulo']}")
+            st.write(f"**Tipo de nota:** {caso['tipo_nota']}")
+            st.write(f"**Valor nominal:** {caso['valor_nominal']}")
+            st.write(f"**Saldo declarado:** {caso['saldo']}")
+            st.caption(f"Ingresado el {caso.get('fecha_ingreso', 'N/D')} · Documento: {caso.get('documento_respaldo', 'N/D')}")
 
-    if expediente.get("siguiente_paso") is not None:
-        if expediente["alertas"]:
-            for alerta in expediente["alertas"]:
-                st.warning(f"**{alerta['tipo']}**: {alerta['detalle']}")
-        else:
-            st.success("Sin hallazgos. El caso pasó todas las validaciones.")
+    with col_antecedentes:
+        with st.container(border=True):
+            st.subheader("Antecedentes reutilizables")
+            antecedentes = get(f"/casos/{caso_id}/antecedentes")
 
-        paso = expediente["siguiente_paso"]
-        st.info(f"Siguiente paso sugerido: **{paso['accion']}** — {paso['motivo']}")
-        st.caption("Esta sugerencia requiere aprobación humana antes de ejecutarse.")
-    else:
-        st.caption("Aún no se ha validado este caso.")
-
-st.divider()
-
-# ---------------------------------------------------------------------------
-# Paso 3 — HU3: preparación de negociación y cierre asistido
-# ---------------------------------------------------------------------------
-
-st.header("Paso 3 — Negociación y cierre")
-st.caption(
-    "Genera un borrador de la ficha de negociación con los datos confirmados y apruébalo. La "
-    "liquidación, transferencia y endoso quedan como propuesta: nunca se ejecutan automáticamente."
-)
-
-col_borrador, col_aprobar = st.columns(2)
-
-with col_borrador:
-    with st.container(border=True):
-        st.subheader("Generar borrador")
-        if st.button("Generar borrador de ficha de negociación"):
-            post(f"/casos/{caso_id}/borrador")
-            st.rerun()
-        if expediente.get("borrador"):
-            st.text_area("Borrador actual (propuesta, no ejecutado)", expediente["borrador"], height=220)
-        else:
-            st.caption("Aún no se ha generado un borrador para este caso.")
-
-with col_aprobar:
-    with st.container(border=True):
-        st.subheader("Aprobar borrador")
-        hay_borrador = bool(expediente.get("borrador"))
-        if not hay_borrador:
-            st.caption("Genera el borrador (columna izquierda) antes de poder aprobarlo.")
-        aprobado_por = st.text_input("Nombre del operador que aprueba", disabled=not hay_borrador)
-        observaciones = st.text_area("Observaciones", height=80, disabled=not hay_borrador)
-        if st.button("Aprobar borrador", type="primary", disabled=not hay_borrador):
-            if not aprobado_por:
-                st.error("Ingresa el nombre del operador antes de aprobar.")
-            else:
-                post(
-                    f"/casos/{caso_id}/aprobar",
-                    {"aprobado_por": aprobado_por, "observaciones": observaciones or None},
+            if not antecedentes:
+                st.info(
+                    "Sin coincidencias previas por RUC o número de título. Se ingresa como caso nuevo — "
+                    "puedes continuar directamente al Paso 2."
                 )
-                st.toast("Borrador aprobado. Liquidación, transferencia y endoso quedan como propuesta pendiente.")
+            else:
+                for a in antecedentes:
+                    with st.container(border=True):
+                        if a.get("tipo_coincidencia") == "aproximada":
+                            st.markdown(
+                                f":blue[**Coincidencia aproximada (IA)**] — {a.get('similitud', '?')}% de similitud "
+                                f"con **{a['titular']}** (RUC {a['ruc']})"
+                            )
+                            st.caption(f"Razón: {a.get('razon', 'sin detalle')}")
+                        else:
+                            st.markdown(":green[**Coincidencia exacta**]")
+                        st.write(f"**{a['dato']}**: {a['valor_dato']}")
+                        st.caption(f"Fecha: {a['fecha_validacion']} · Fuente: {a['fuente']} · Estado: {a['estado']}")
+                        accion = st.radio(
+                            "Acción del operador",
+                            ["confirmar", "editar", "rechazar"],
+                            horizontal=True,
+                            key=f"accion_{caso_id}_{a['dato']}",
+                            help="Confirmar guarda el valor tal cual. Editar te deja escribir uno nuevo. Rechazar no guarda nada.",
+                        )
+                        valor_final = a["valor_dato"]
+                        if accion == "editar":
+                            valor_final = st.text_input(
+                                "Nuevo valor", value=a["valor_dato"], key=f"valor_{caso_id}_{a['dato']}"
+                            )
+                        st.session_state.decisiones[a["dato"]] = {"accion": accion, "valor_final": valor_final}
+
+                if st.button("Guardar decisiones de antecedentes", type="primary"):
+                    decisiones = [
+                        {"dato": dato, "accion": d["accion"], "valor_final": d["valor_final"]}
+                        for dato, d in st.session_state.decisiones.items()
+                    ]
+                    post(f"/casos/{caso_id}/confirmar", {"decisiones": decisiones})
+                    st.toast("Decisiones guardadas en el expediente.")
+                    ir_al_paso(1)  # completado -> avanza automáticamente al Paso 2
+                    st.rerun()
+
+elif paso_actual == 1:
+    # Paso 2 — HU2: validación y siguiente acción guiada
+    st.header("Paso 2 — Validación contra el SRI")
+    with st.container(border=True):
+        st.caption(
+            "Verifica existencia, saldo, estado y posibles bloqueos contra la fuente simulada del SRI, y "
+            "sugiere el siguiente paso. La decisión final siempre depende del operador."
+        )
+
+        if st.button("Validar caso", type="primary"):
+            post(f"/casos/{caso_id}/validar")
+            ir_al_paso(2)  # completado -> avanza automáticamente al Paso 3
+            st.rerun()
+
+        if expediente.get("siguiente_paso") is not None:
+            if expediente["alertas"]:
+                for alerta in expediente["alertas"]:
+                    st.warning(f"**{alerta['tipo']}**: {alerta['detalle']}")
+            else:
+                st.success("Sin hallazgos. El caso pasó todas las validaciones.")
+
+            paso = expediente["siguiente_paso"]
+            st.info(f"Siguiente paso sugerido: **{paso['accion']}** — {paso['motivo']}")
+            st.caption("Esta sugerencia requiere aprobación humana antes de ejecutarse.")
+        else:
+            st.caption("Aún no se ha validado este caso.")
+
+elif paso_actual == 2:
+    # Paso 3 — HU3: preparación de negociación y cierre asistido
+    st.header("Paso 3 — Negociación y cierre")
+    st.caption(
+        "Genera un borrador de la ficha de negociación con los datos confirmados y apruébalo. La "
+        "liquidación, transferencia y endoso quedan como propuesta: nunca se ejecutan automáticamente."
+    )
+
+    col_borrador, col_aprobar = st.columns(2)
+
+    with col_borrador:
+        with st.container(border=True):
+            st.subheader("Generar borrador")
+            if st.button("Generar borrador de ficha de negociación"):
+                post(f"/casos/{caso_id}/borrador")
                 st.rerun()
+            if expediente.get("borrador"):
+                st.text_area("Borrador actual (propuesta, no ejecutado)", expediente["borrador"], height=220)
+            else:
+                st.caption("Aún no se ha generado un borrador para este caso.")
+
+    with col_aprobar:
+        with st.container(border=True):
+            st.subheader("Aprobar borrador")
+            hay_borrador = bool(expediente.get("borrador"))
+            if not hay_borrador:
+                st.caption("Genera el borrador (columna izquierda) antes de poder aprobarlo.")
+            aprobado_por = st.text_input("Nombre del operador que aprueba", disabled=not hay_borrador)
+            observaciones = st.text_area("Observaciones", height=80, disabled=not hay_borrador)
+            if st.button("Aprobar borrador", type="primary", disabled=not hay_borrador):
+                if not aprobado_por:
+                    st.error("Ingresa el nombre del operador antes de aprobar.")
+                else:
+                    post(
+                        f"/casos/{caso_id}/aprobar",
+                        {"aprobado_por": aprobado_por, "observaciones": observaciones or None},
+                    )
+                    st.toast("Borrador aprobado. Liquidación, transferencia y endoso quedan como propuesta pendiente.")
+                    ir_al_paso(3)  # completado -> avanza automáticamente al Cierre
+                    st.rerun()
+
+else:
+    # Paso 4 — Cierre: expediente final del caso
+    st.header("Cierre del caso")
+    with st.container(border=True):
+        if expediente["estado"] == "aprobado_pendiente_liquidacion":
+            st.success("Caso aprobado. Liquidación, transferencia y endoso quedan como propuesta pendiente de acción manual regulada.")
+        else:
+            st.info("Este caso todavía no ha sido aprobado — vuelve al Paso 3 para generar y aprobar el borrador.")
+        st.write(f"**Estado actual:** {expediente['estado']}")
+        st.write(f"**Borrador aprobado:**")
+        st.text_area("Ficha de negociación", expediente.get("borrador") or "", height=220, disabled=True)
+        st.write("**Historial completo:**")
+        for evento in expediente["historial"]:
+            st.write(f"- {evento['evento']}" + (f" — {evento['detalle']}" if evento.get("detalle") else ""))
 
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Expediente único — responsable, fecha, observaciones e historial completo
+# Navegación manual entre pasos
 # ---------------------------------------------------------------------------
 
-st.header("Expediente del caso")
-with st.container(border=True):
-    st.caption("Responsable, fecha, observaciones y documentos quedan aquí como respaldo del proceso.")
-    st.write(f"**Estado actual:** {expediente['estado']}")
-    st.write("**Historial:**")
-    for evento in expediente["historial"]:
-        st.write(f"- {evento['evento']}" + (f" — {evento['detalle']}" if evento.get("detalle") else ""))
+col_anterior, col_espacio, col_siguiente = st.columns([1, 3, 1])
+with col_anterior:
+    if st.button("Anterior", disabled=paso_actual == 0, use_container_width=True):
+        ir_al_paso(paso_actual - 1)
+        st.rerun()
+with col_siguiente:
+    if st.button("Siguiente", disabled=paso_actual == len(PASOS_STEPPER) - 1, use_container_width=True):
+        ir_al_paso(paso_actual + 1)
+        st.rerun()

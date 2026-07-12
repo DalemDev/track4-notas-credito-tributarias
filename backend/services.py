@@ -5,7 +5,7 @@ import mimetypes
 import anthropic
 from rapidfuzz import fuzz
 import data_store
-from data_store import ANTECEDENTES, ESTADO_SRI
+from data_store import ESTADO_SRI
 
 TIPOS_SOPORTADOS = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"}
 
@@ -69,21 +69,22 @@ def buscar_antecedentes(ruc: str, numero_titulo: str | None = None, titular: str
     coincidencia con un número de título anterior, y por coincidencia
     aproximada de titular (RAG, ver más abajo). No aplica nada: solo
     sugiere, el operador confirma/edita/rechaza en el siguiente paso."""
+    antecedentes = data_store.listar_antecedentes()
     exactos = [
         {**a, "tipo_coincidencia": "exacta"}
-        for a in ANTECEDENTES
+        for a in antecedentes
         if a["ruc"] == ruc or (numero_titulo and a.get("numero_titulo_anterior") == numero_titulo)
     ]
-    aproximados = buscar_coincidencias_aproximadas(titular, exactos) if titular else []
+    aproximados = buscar_coincidencias_aproximadas(titular, exactos, antecedentes) if titular else []
     return exactos + aproximados
 
 
-def _candidatos_por_similitud(titular: str, ya_vistos: set[tuple]) -> list[dict]:
+def _candidatos_por_similitud(titular: str, antecedentes: list[dict], ya_vistos: set[tuple]) -> list[dict]:
     """Retrieval: preselecciona (con coincidencia difusa, no LLM) antecedentes
     de OTROS titulares con nombre similar que aún no fueron devueltos como
     coincidencia exacta — la 'coincidencia relevante' que pide HU1."""
     candidatos = []
-    for a in ANTECEDENTES:
+    for a in antecedentes:
         clave = (a["ruc"], a.get("numero_titulo_anterior"), a["dato"])
         if clave in ya_vistos:
             continue
@@ -94,7 +95,7 @@ def _candidatos_por_similitud(titular: str, ya_vistos: set[tuple]) -> list[dict]
     return candidatos[:MAX_CANDIDATOS_COINCIDENCIA]
 
 
-def buscar_coincidencias_aproximadas(titular: str, ya_exactos: list[dict]) -> list[dict]:
+def buscar_coincidencias_aproximadas(titular: str, ya_exactos: list[dict], antecedentes: list[dict] | None = None) -> list[dict]:
     """RAG con guardrail anti-alucinación para la 'coincidencia relevante' de
     HU1: primero se RECUPERAN candidatos por coincidencia difusa de nombre
     (rapidfuzz, determinista, sin LLM), y luego Claude juzga cuáles son
@@ -104,7 +105,9 @@ def buscar_coincidencias_aproximadas(titular: str, ya_exactos: list[dict]) -> li
     IA disponible, no se muestra nada (nunca se inventa una coincidencia)."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     ya_vistos = {(a["ruc"], a.get("numero_titulo_anterior"), a["dato"]) for a in ya_exactos}
-    candidatos = _candidatos_por_similitud(titular, ya_vistos)
+    if antecedentes is None:
+        antecedentes = data_store.listar_antecedentes()
+    candidatos = _candidatos_por_similitud(titular, antecedentes, ya_vistos)
 
     if not candidatos or not api_key:
         return []

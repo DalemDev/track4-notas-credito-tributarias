@@ -46,3 +46,22 @@ class EventoORM(Base):
     evento = Column(String, nullable=False)
     detalle = Column(Text, nullable=True)
     fecha = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AntecedenteORM(Base):
+    """Antecedentes históricos reutilizables (HU1). A diferencia de
+    estado_sri_simulado.csv (fuente externa real simulada), este es el
+    propio historial de la organización, por eso vive en la base de datos
+    en vez de un CSV estático — se siembra una única vez desde
+    antecedentes_historicos.csv la primera vez que se crea la tabla."""
+    __tablename__ = "antecedentes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ruc = Column(String, nullable=False)
+    titular = Column(String, nullable=False)
+    numero_titulo_anterior = Column(String, nullable=True)
+    dato = Column(String, nullable=False)
+    valor_dato = Column(String, nullable=False)
+    fecha_validacion = Column(String, nullable=False)
+    fuente = Column(String, nullable=False)
+    estado = Column(String, nullable=False)

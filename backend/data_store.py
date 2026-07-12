@@ -5,17 +5,14 @@ from pathlib import Path
 from sqlalchemy import select
 
 from database import Base, SessionLocal, engine
-from db_models import CasoORM, EventoORM, ExpedienteORM
+from db_models import AntecedenteORM, CasoORM, EventoORM, ExpedienteORM
 
 DATA_DIR = Path(__file__).parent / "data"
 
-# --- Fuentes de referencia externas simuladas (no son "estado" de la app) ---
-# En un entorno real serían consultas a servicios externos (SRI, historial
-# de la casa de valores), por eso siguen siendo datos estáticos de solo
-# lectura en vez de vivir en la base de datos propia del sistema.
-
-with open(DATA_DIR / "antecedentes_historicos.csv", encoding="utf-8") as f:
-    ANTECEDENTES = list(csv.DictReader(f))
+# --- Fuente de referencia externa simulada (no es "estado" de la app) ---
+# En un entorno real sería una consulta al SRI, por eso sigue siendo un
+# dato estático de solo lectura en vez de vivir en la base de datos propia
+# del sistema.
 
 with open(DATA_DIR / "estado_sri_simulado.csv", encoding="utf-8") as f:
     ESTADO_SRI = {row["numero_titulo"]: row for row in csv.DictReader(f)}
@@ -23,8 +20,26 @@ with open(DATA_DIR / "estado_sri_simulado.csv", encoding="utf-8") as f:
 # --- Estado propio de la aplicación: persistente en SQLite vía SQLAlchemy ---
 # Sobrevive a reinicios del servidor y es consistente sin importar el canal
 # (Streamlit hoy, cualquier otro cliente de la API mañana) que la consuma.
+# A diferencia del SRI, los antecedentes históricos SÍ son propiedad de la
+# organización (su propio historial), así que viven en la base de datos:
+# antecedentes_historicos.csv solo se usa como semilla inicial, una única vez.
 
 Base.metadata.create_all(bind=engine)
+
+
+def _sembrar_antecedentes_si_vacio():
+    with SessionLocal() as session:
+        si_ya_hay_datos = session.scalars(select(AntecedenteORM)).first()
+        if si_ya_hay_datos:
+            return
+        with open(DATA_DIR / "antecedentes_historicos.csv", encoding="utf-8") as f:
+            filas = list(csv.DictReader(f))
+        for fila in filas:
+            session.add(AntecedenteORM(**fila))
+        session.commit()
+
+
+_sembrar_antecedentes_si_vacio()
 
 
 def _caso_a_dict(caso: CasoORM) -> dict:
@@ -148,3 +163,22 @@ def registrar_evento(caso_id: str, evento: str, detalle: str | None = None):
     with SessionLocal() as session:
         session.add(EventoORM(caso_id=caso_id, evento=evento, detalle=detalle))
         session.commit()
+
+
+def _antecedente_a_dict(a: AntecedenteORM) -> dict:
+    return {
+        "ruc": a.ruc,
+        "titular": a.titular,
+        "numero_titulo_anterior": a.numero_titulo_anterior,
+        "dato": a.dato,
+        "valor_dato": a.valor_dato,
+        "fecha_validacion": a.fecha_validacion,
+        "fuente": a.fuente,
+        "estado": a.estado,
+    }
+
+
+def listar_antecedentes() -> list[dict]:
+    with SessionLocal() as session:
+        antecedentes = session.scalars(select(AntecedenteORM)).all()
+        return [_antecedente_a_dict(a) for a in antecedentes]

@@ -37,15 +37,15 @@ Los operadores que reciben notas de crédito tributarias del SRI reingresan manu
                                                                 │
                                     ┌───────────────────────────┼───────────────────────────┐
                                     ▼                            ▼                            ▼
-                          SQLite (SQLAlchemy)          CSV simulados (solo lectura)     Anthropic API
-                          casos + expedientes           (backend/data/) — fuente        (Claude Sonnet 5)
-                          persistentes entre             externa simulada (SRI,          extracción de
-                          reinicios y canales             historial de la casa           documentos +
-                          (database.py, db_models.py)     de valores)                    RAG con guardrails
+                          SQLite (SQLAlchemy)             CSV simulado                  Anthropic API
+                          casos + expedientes +          (solo lectura)                (Claude Sonnet 5)
+                          antecedentes, persistentes    estado_sri_simulado.csv          extracción de
+                          entre reinicios y canales      — única fuente externa          documentos +
+                          (database.py, db_models.py)    real (el SRI)                  RAG con guardrails
 ```
 
 - **Backend**: FastAPI expuesto como servicio REST con endpoints claros y documentados (Swagger en `/docs`), independiente del canal que lo consuma.
-- **Persistencia**: SQLite vía SQLAlchemy — el estado (casos, expedientes, historial con timestamp) sobrevive a reinicios del servidor y es consistente sin importar el canal (hoy Streamlit; cualquier otro cliente de la misma API mañana). Las fuentes de referencia simuladas (SRI, antecedentes históricos) se mantienen como datos externos de solo lectura, no como estado propio.
+- **Persistencia**: SQLite vía SQLAlchemy — casos, expedientes (con historial con timestamp) y **antecedentes** sobreviven a reinicios del servidor y son consistentes sin importar el canal (hoy Streamlit; cualquier otro cliente de la misma API mañana). Solo `estado_sri_simulado.csv` se mantiene como dato externo de solo lectura (representa al SRI, un sistema fuera de esta aplicación) — los antecedentes históricos son propiedad de la organización, así que viven en la base de datos.
 - **Frontend**: Streamlit, una sola página con un stepper visual que refleja el estado real del backend.
 - **IA**: SDK oficial `anthropic`. Dos usos concretos, ambos con guardrails explícitos contra alucinación — ver [Integración con Claude](#integración-con-claude-anthropic-api) y [RAG](#coincidencias-aproximadas-rag-con-guardrails).
 - **Calidad**: suite de pruebas automatizadas con `pytest` sobre una base de datos aislada (ver [Pruebas automatizadas](#pruebas-automatizadas)).
@@ -89,7 +89,9 @@ Sin candidatos recuperados, o sin `ANTHROPIC_API_KEY`, el sistema simplemente no
 
 ## Persistencia
 
-Casos y expedientes viven en **SQLite vía SQLAlchemy**, no en memoria — sobreviven a reinicios del servidor y son consistentes para cualquier canal que consuma esta misma API (hoy el frontend Streamlit; cualquier otro cliente HTTP mañana vería el mismo estado). El historial de cada expediente queda registrado con marca de tiempo real por evento, no solo en memoria de proceso. Detalle técnico en [`backend/README.md`](backend/README.md#persistencia).
+Casos, expedientes y **antecedentes históricos** viven en **SQLite vía SQLAlchemy**, no en memoria — sobreviven a reinicios del servidor y son consistentes para cualquier canal que consuma esta misma API (hoy el frontend Streamlit; cualquier otro cliente HTTP mañana vería el mismo estado). El historial de cada expediente queda registrado con marca de tiempo real por evento, no solo en memoria de proceso.
+
+Solo `estado_sri_simulado.csv` sigue siendo un archivo de solo lectura — representa una fuente externa (el SRI), no algo que la aplicación posea. `antecedentes_historicos.csv`, en cambio, ya no se lee en tiempo de ejecución: es el propio historial de la organización, así que se migra a la base de datos una única vez al arrancar por primera vez (semilla inicial); de ahí en adelante, la base de datos es la única fuente de verdad. Detalle técnico en [`backend/README.md`](backend/README.md#persistencia).
 
 ## Pruebas automatizadas
 
@@ -111,8 +113,8 @@ track4_proyecto/
 │   ├── models.py                # Modelos Pydantic de request/response
 │   ├── database.py              # Engine y sesión de SQLAlchemy
 │   ├── db_models.py             # Modelos ORM (Caso, Expediente, Evento)
-│   ├── data_store.py            # Capa de acceso a datos (persistente) + carga de CSV simulados
-│   ├── data/                     # CSV/JSON simulados (antecedentes, estado SRI) — fuente externa
+│   ├── data_store.py            # Capa de acceso a datos (persistente) + semilla inicial de antecedentes
+│   ├── data/                     # estado_sri_simulado.csv (fuente externa) + antecedentes_historicos.csv (solo semilla inicial)
 │   ├── tests/                    # Suite de pruebas automatizadas (pytest)
 │   ├── requirements.txt
 │   ├── requirements-dev.txt      # + pytest, httpx (solo para pruebas)

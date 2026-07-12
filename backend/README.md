@@ -27,9 +27,10 @@ Abre http://127.0.0.1:8000/docs para probar todos los endpoints desde el navegad
 
 ## Persistencia
 
-El estado de la aplicación (casos y expedientes) vive en **SQLite vía SQLAlchemy** (`database.py`, `db_models.py`), no en memoria. El archivo `sri_notas.db` se crea automáticamente en `backend/` al arrancar el servidor y sobrevive a reinicios.
+El estado de la aplicación (casos, expedientes y antecedentes) vive en **SQLite vía SQLAlchemy** (`database.py`, `db_models.py`), no en memoria. El archivo `sri_notas.db` se crea automáticamente en `backend/` al arrancar el servidor y sobrevive a reinicios.
 
-Las fuentes de referencia simuladas (`data/antecedentes_historicos.csv`, `data/estado_sri_simulado.csv`) siguen siendo archivos estáticos de solo lectura — representan sistemas externos (el SRI, el historial de la casa de valores), no el estado propio de esta aplicación.
+- `data/estado_sri_simulado.csv` sigue siendo un archivo estático de solo lectura — representa una fuente **externa** real (el SRI), no algo que la aplicación posea.
+- `data/antecedentes_historicos.csv` **ya no se lee en tiempo de ejecución**: es el propio historial de la organización, así que vive en la tabla `antecedentes` de la base de datos. El CSV solo se usa como **semilla inicial**, una única vez — la primera vez que se crea la base de datos, `data_store.py` migra su contenido a la tabla; después de eso, la base de datos es la única fuente de verdad.
 
 Para apuntar a otra base de datos (o una temporal, como hacen las pruebas), usa la variable de entorno `DATABASE_URL`:
 ```
