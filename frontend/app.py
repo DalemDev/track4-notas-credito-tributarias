@@ -5,6 +5,72 @@ API_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(page_title="Track 4 - Notas de crédito tributarias", layout="wide")
 
+# ---------------------------------------------------------------------------
+# Paleta e identidad visual
+# ---------------------------------------------------------------------------
+
+NAVY = "#15151F"
+NAVY_LIGHT = "#2A2A38"
+MINT_BG = "#DCFCE7"
+MINT_BORDER = "#86EFAC"
+MINT_TEXT = "#166534"
+MINT_SOLID = "#22C55E"
+GRAY_BG = "#F3F4F6"
+GRAY_TEXT = "#9CA3AF"
+TEXT_DARK = "#111827"
+
+
+def inyectar_estilos():
+    st.markdown(
+        f"""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        html, body, [class*="css"] {{
+            font-family: 'Inter', sans-serif;
+        }}
+
+        section[data-testid="stSidebar"] {{
+            background-color: {NAVY};
+        }}
+        section[data-testid="stSidebar"] * {{
+            color: #E5E7EB !important;
+        }}
+        section[data-testid="stSidebar"] hr {{
+            border-color: {NAVY_LIGHT};
+        }}
+        section[data-testid="stSidebar"] button[class*="stBaseButton-primary"] {{
+            background-color: {MINT_BG} !important;
+            color: {MINT_TEXT} !important;
+            border: 1px solid {MINT_BORDER} !important;
+            font-weight: 600;
+        }}
+        section[data-testid="stSidebar"] button[class*="stBaseButton-secondary"] {{
+            background-color: transparent !important;
+            border: 1px solid {NAVY_LIGHT} !important;
+            color: #C7C7D1 !important;
+        }}
+        section[data-testid="stSidebar"] button[class*="stBaseButton-secondary"]:hover {{
+            border-color: {MINT_SOLID} !important;
+            color: #ffffff !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_encabezado_paso(numero, total, titulo):
+    """Etiqueta pequeña en mayúsculas + título grande — jerarquía tipográfica
+    de dos niveles, en vez de un único encabezado plano."""
+    st.markdown(
+        f'<p style="color:{MINT_TEXT}; font-weight:700; letter-spacing:0.08em; '
+        f'text-transform:uppercase; font-size:0.78rem; margin-bottom:2px;">'
+        f'Paso {numero} de {total}</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(f'<h2 style="margin-top:0; color:{TEXT_DARK};">{titulo}</h2>', unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------------------
 # Utilidades
@@ -68,12 +134,12 @@ def render_stepper(pasos, indice_actual):
     piezas = []
     for i, titulo in enumerate(pasos):
         if i < indice_actual:
-            color, estado, contenido = "#16a34a", "Completado", "&#10003;"
+            color, estado, contenido = MINT_SOLID, "Completado", "&#10003;"
         elif i == indice_actual:
-            color, estado, contenido = "#2563eb", "En curso", str(i + 1)
+            color, estado, contenido = NAVY, "En curso", str(i + 1)
         else:
-            color, estado, contenido = "#d1d5db", "Pendiente", str(i + 1)
-        color_texto = "#111827" if i <= indice_actual else "#9ca3af"
+            color, estado, contenido = "#D1D5DB", "Pendiente", str(i + 1)
+        color_texto = TEXT_DARK if i <= indice_actual else GRAY_TEXT
 
         piezas.append(f"""
         <div style="display:flex; flex-direction:column; align-items:center; min-width:110px;">
@@ -85,7 +151,7 @@ def render_stepper(pasos, indice_actual):
         </div>
         """)
         if i < len(pasos) - 1:
-            linea_color = "#16a34a" if i < indice_actual else "#d1d5db"
+            linea_color = MINT_SOLID if i < indice_actual else "#D1D5DB"
             piezas.append(f'<div style="flex:1; height:2px; background:{linea_color}; margin-top:17px;"></div>')
 
     st.markdown(
@@ -93,6 +159,8 @@ def render_stepper(pasos, indice_actual):
         unsafe_allow_html=True,
     )
 
+
+inyectar_estilos()
 
 # Mapea el estado del expediente (fuente de verdad: el backend) a un índice de
 # paso (0-based) y un mensaje en lenguaje natural sobre qué hacer.
@@ -185,7 +253,7 @@ with st.expander("Crear caso nuevo desde un documento", expanded=not casos):
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Selección de caso (barra lateral) — siempre visible mientras se navega
+# Selección de caso y navegación (barra lateral) — siempre visible
 # ---------------------------------------------------------------------------
 
 if not casos:
@@ -212,8 +280,8 @@ indice_sugerido, mensaje_guia = PASO_POR_ESTADO.get(
 )
 
 # Al cambiar de caso, la vista salta al paso donde ese caso realmente está.
-# Dentro del mismo caso, el operador puede navegar libremente con
-# Anterior/Siguiente sin que eso altere el estado real del backend.
+# Dentro del mismo caso, el operador puede navegar libremente sin que eso
+# altere el estado real del backend.
 if "caso_actual" not in st.session_state or st.session_state.caso_actual != caso_id:
     st.session_state.decisiones = {}
     st.session_state.caso_actual = caso_id
@@ -222,8 +290,19 @@ if "caso_actual" not in st.session_state or st.session_state.caso_actual != caso
 paso_actual = st.session_state.get("paso_actual", indice_sugerido)
 
 st.sidebar.divider()
-st.sidebar.subheader("Progreso del caso")
-st.sidebar.progress((indice_sugerido + 1) / len(PASOS_STEPPER), text=PASOS_STEPPER[indice_sugerido])
+st.sidebar.markdown("**Navegación**")
+for i, nombre_paso in enumerate(PASOS_STEPPER):
+    es_actual = i == paso_actual
+    if st.sidebar.button(
+        f"{i + 1}. {nombre_paso}",
+        key=f"nav_{i}",
+        use_container_width=True,
+        type="primary" if es_actual else "secondary",
+    ):
+        ir_al_paso(i)
+        st.rerun()
+
+st.sidebar.divider()
 st.sidebar.caption(f"Estado interno: `{expediente['estado']}`")
 
 with st.sidebar.expander("Expediente e historial"):
@@ -243,7 +322,7 @@ st.divider()
 
 if paso_actual == 0:
     # Paso 1 — HU1: ingreso asistido y reutilización de antecedentes
-    st.header("Paso 1 — Ingreso asistido y antecedentes")
+    render_encabezado_paso(1, len(PASOS_STEPPER), "Ingreso asistido y antecedentes")
     st.caption(
         "Estos son los datos recibidos del caso y las coincidencias de casos anteriores por RUC o número "
         "de título. Ningún dato se guarda hasta que lo confirmes, edites o rechaces explícitamente."
@@ -311,7 +390,7 @@ if paso_actual == 0:
 
 elif paso_actual == 1:
     # Paso 2 — HU2: validación y siguiente acción guiada
-    st.header("Paso 2 — Validación contra el SRI")
+    render_encabezado_paso(2, len(PASOS_STEPPER), "Validación contra el SRI")
     with st.container(border=True):
         st.caption(
             "Verifica existencia, saldo, estado y posibles bloqueos contra la fuente simulada del SRI, y "
@@ -338,7 +417,7 @@ elif paso_actual == 1:
 
 elif paso_actual == 2:
     # Paso 3 — HU3: preparación de negociación y cierre asistido
-    st.header("Paso 3 — Negociación y cierre")
+    render_encabezado_paso(3, len(PASOS_STEPPER), "Negociación y cierre")
     st.caption(
         "Genera un borrador de la ficha de negociación con los datos confirmados y apruébalo. La "
         "liquidación, transferencia y endoso quedan como propuesta: nunca se ejecutan automáticamente."
@@ -379,7 +458,7 @@ elif paso_actual == 2:
 
 else:
     # Paso 4 — Cierre: expediente final del caso
-    st.header("Cierre del caso")
+    render_encabezado_paso(4, len(PASOS_STEPPER), "Cierre del caso")
     with st.container(border=True):
         if expediente["estado"] == "aprobado_pendiente_liquidacion":
             st.success("Caso aprobado. Liquidación, transferencia y endoso quedan como propuesta pendiente de acción manual regulada.")
