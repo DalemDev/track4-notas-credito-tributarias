@@ -174,7 +174,7 @@ with st.expander("Crear caso nuevo desde un documento", expanded=not casos):
                 st.session_state.pop("documento_nombre", None)
                 st.session_state.pop("archivo_procesado_id", None)
                 st.session_state.caso_recien_creado = nuevo_caso["caso_id"]
-                st.success(f"Caso {nuevo_caso['caso_id']} creado.")
+                st.toast(f"Caso {nuevo_caso['caso_id']} creado.")
                 st.rerun()
 
 st.divider()
@@ -256,6 +256,14 @@ with col_antecedentes:
         else:
             for a in antecedentes:
                 with st.container(border=True):
+                    if a.get("tipo_coincidencia") == "aproximada":
+                        st.markdown(
+                            f":blue[**Coincidencia aproximada (IA)**] — {a.get('similitud', '?')}% de similitud "
+                            f"con **{a['titular']}** (RUC {a['ruc']})"
+                        )
+                        st.caption(f"Razón: {a.get('razon', 'sin detalle')}")
+                    else:
+                        st.markdown(":green[**Coincidencia exacta**]")
                     st.write(f"**{a['dato']}**: {a['valor_dato']}")
                     st.caption(f"Fecha: {a['fecha_validacion']} · Fuente: {a['fuente']} · Estado: {a['estado']}")
                     accion = st.radio(
@@ -278,7 +286,7 @@ with col_antecedentes:
                     for dato, d in st.session_state.decisiones.items()
                 ]
                 post(f"/casos/{caso_id}/confirmar", {"decisiones": decisiones})
-                st.success("Decisiones guardadas en el expediente.")
+                st.toast("Decisiones guardadas en el expediente.")
                 st.rerun()
 
 st.divider()
@@ -298,17 +306,21 @@ with st.container(border=True):
         st.caption("Sugerencia: confirma primero los antecedentes del Paso 1 (opcional — también puedes validar directamente).")
 
     if st.button("Validar caso"):
-        resultado = post(f"/casos/{caso_id}/validar")
-        if resultado["alertas"]:
-            for alerta in resultado["alertas"]:
+        post(f"/casos/{caso_id}/validar")
+        st.rerun()
+
+    if expediente.get("siguiente_paso") is not None:
+        if expediente["alertas"]:
+            for alerta in expediente["alertas"]:
                 st.warning(f"**{alerta['tipo']}**: {alerta['detalle']}")
         else:
             st.success("Sin hallazgos. El caso pasó todas las validaciones.")
 
-        paso = resultado["siguiente_paso"]
+        paso = expediente["siguiente_paso"]
         st.info(f"Siguiente paso sugerido: **{paso['accion']}** — {paso['motivo']}")
         st.caption("Esta sugerencia requiere aprobación humana antes de ejecutarse.")
-        st.rerun()
+    else:
+        st.caption("Aún no se ha validado este caso.")
 
 st.divider()
 
@@ -347,12 +359,11 @@ with col_aprobar:
             if not aprobado_por:
                 st.error("Ingresa el nombre del operador antes de aprobar.")
             else:
-                resultado = post(
+                post(
                     f"/casos/{caso_id}/aprobar",
                     {"aprobado_por": aprobado_por, "observaciones": observaciones or None},
                 )
-                st.success(f"Estado del caso: {resultado['estado']}")
-                st.caption("Liquidación, transferencia y endoso quedan como propuesta pendiente. No se ejecuta nada en producción.")
+                st.toast("Borrador aprobado. Liquidación, transferencia y endoso quedan como propuesta pendiente.")
                 st.rerun()
 
 st.divider()

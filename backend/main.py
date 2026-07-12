@@ -2,7 +2,7 @@ from datetime import date
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 
-from data_store import CASOS_NUEVOS, get_or_crear_expediente, registrar_evento
+import data_store
 from models import ConfirmacionRequest, AprobarBorradorRequest, NuevoCasoRequest
 import services
 
@@ -16,7 +16,7 @@ app = FastAPI(title="Asistente de notas de crédito tributarias - Track 4")
 @app.get("/casos")
 def listar_casos():
     """Lista los casos entrantes (equivalente a lo que el operador ve al abrir el sistema)."""
-    return list(CASOS_NUEVOS.values())
+    return data_store.listar_casos()
 
 
 @app.post("/casos")
@@ -25,8 +25,7 @@ def crear_caso(body: NuevoCasoRequest):
     ingresados manualmente). Es el punto de entrada de HU1: 'extrae o recibe
     datos... para que no tenga que reingresar información'."""
     anio = date.today().year
-    existentes = [c for c in CASOS_NUEVOS if c.startswith(f"NC-{anio}-")]
-    caso_id = f"NC-{anio}-{len(existentes) + 1:04d}"
+    caso_id = f"NC-{anio}-{data_store.contar_casos_del_anio(anio) + 1:04d}"
 
     nuevo_caso = {
         "caso_id": caso_id,
@@ -39,13 +38,12 @@ def crear_caso(body: NuevoCasoRequest):
         "documento_respaldo": body.documento_respaldo,
         "fecha_ingreso": date.today().isoformat(),
     }
-    CASOS_NUEVOS[caso_id] = nuevo_caso
-    return nuevo_caso
+    return data_store.crear_caso(nuevo_caso)
 
 
 @app.get("/casos/{caso_id}")
 def detalle_caso(caso_id: str):
-    caso = CASOS_NUEVOS.get(caso_id)
+    caso = data_store.obtener_caso(caso_id)
     if not caso:
         raise HTTPException(404, "Caso no encontrado")
     return caso
@@ -54,28 +52,30 @@ def detalle_caso(caso_id: str):
 @app.get("/casos/{caso_id}/antecedentes")
 def antecedentes_del_caso(caso_id: str):
     """Sugerencias de datos reutilizables para este caso, con fecha/fuente/estado."""
-    caso = CASOS_NUEVOS.get(caso_id)
+    caso = data_store.obtener_caso(caso_id)
     if not caso:
         raise HTTPException(404, "Caso no encontrado")
-    return services.buscar_antecedentes(caso["ruc"], caso.get("numero_titulo"))
+    return services.buscar_antecedentes(caso["ruc"], caso.get("numero_titulo"), caso.get("titular"))
 
 
 @app.post("/casos/{caso_id}/confirmar")
 def confirmar_datos(caso_id: str, body: ConfirmacionRequest):
     """El operador confirma, edita o rechaza cada dato sugerido.
     Nada se guarda sin pasar por aquí (criterio de aceptación de HU1)."""
-    if caso_id not in CASOS_NUEVOS:
+    if not data_store.existe_caso(caso_id):
         raise HTTPException(404, "Caso no encontrado")
 
-    expediente = get_or_crear_expediente(caso_id)
+    expediente = data_store.get_or_crear_expediente(caso_id)
+    datos_confirmados = expediente["datos_confirmados"]
     for decision in body.decisiones:
         if decision.accion in ("confirmar", "editar"):
-            expediente["datos_confirmados"][decision.dato] = decision.valor_final
+            datos_confirmados[decision.dato] = decision.valor_final
         # "rechazar" no guarda nada, solo queda en el historial
-        registrar_evento(caso_id, f"dato_{decision.accion}", decision.dato)
+        data_store.registrar_evento(caso_id, f"dato_{decision.accion}", decision.dato)
 
-    expediente["estado"] = "datos_confirmados"
-    return expediente
+    return data_store.actualizar_expediente(
+        caso_id, estado="datos_confirmados", datos_confirmados=datos_confirmados
+    )
 
 
 @app.post("/extraccion/documento")
@@ -93,15 +93,17 @@ async def extraer_desde_documento(archivo: UploadFile = File(...)):
 
 @app.post("/casos/{caso_id}/validar")
 def validar_caso(caso_id: str):
-    if caso_id not in CASOS_NUEVOS:
+    if not data_store.existe_caso(caso_id):
         raise HTTPException(404, "Caso no encontrado")
 
     resultado = services.validar_caso(caso_id)
-    expediente = get_or_crear_expediente(caso_id)
-    expediente["alertas"] = resultado["alertas"]
-    expediente["siguiente_paso"] = resultado["siguiente_paso"]
-    expediente["estado"] = "validado"
-    registrar_evento(caso_id, "validacion_ejecutada", str(len(resultado["alertas"])) + " alertas")
+    data_store.actualizar_expediente(
+        caso_id,
+        estado="validado",
+        alertas=resultado["alertas"],
+        siguiente_paso=resultado["siguiente_paso"],
+    )
+    data_store.registrar_evento(caso_id, "validacion_ejecutada", str(len(resultado["alertas"])) + " alertas")
     return resultado
 
 
@@ -111,14 +113,13 @@ def validar_caso(caso_id: str):
 
 @app.post("/casos/{caso_id}/borrador")
 def generar_borrador(caso_id: str):
-    if caso_id not in CASOS_NUEVOS:
+    if not data_store.existe_caso(caso_id):
         raise HTTPException(404, "Caso no encontrado")
 
-    expediente = get_or_crear_expediente(caso_id)
+    expediente = data_store.get_or_crear_expediente(caso_id)
     resultado = services.generar_borrador(caso_id, expediente["datos_confirmados"])
-    expediente["borrador"] = resultado["borrador"]
-    expediente["estado"] = resultado["estado"]
-    registrar_evento(caso_id, "borrador_generado")
+    data_store.actualizar_expediente(caso_id, borrador=resultado["borrador"], estado=resultado["estado"])
+    data_store.registrar_evento(caso_id, "borrador_generado")
     return resultado
 
 
@@ -126,19 +127,18 @@ def generar_borrador(caso_id: str):
 def aprobar_borrador(caso_id: str, body: AprobarBorradorRequest):
     """El operador aprueba el borrador. Esto NO ejecuta liquidación, transferencia
     ni endoso: solo deja el caso listo como propuesta aprobada (criterio de HU3)."""
-    expediente = get_or_crear_expediente(caso_id)
+    expediente = data_store.get_or_crear_expediente(caso_id)
     if not expediente["borrador"]:
         raise HTTPException(400, "No hay borrador generado para aprobar")
 
-    expediente["estado"] = "aprobado_pendiente_liquidacion"
-    registrar_evento(caso_id, "borrador_aprobado", body.aprobado_por)
+    data_store.registrar_evento(caso_id, "borrador_aprobado", body.aprobado_por)
     if body.observaciones:
-        registrar_evento(caso_id, "observacion", body.observaciones)
-    return expediente
+        data_store.registrar_evento(caso_id, "observacion", body.observaciones)
+    return data_store.actualizar_expediente(caso_id, estado="aprobado_pendiente_liquidacion")
 
 
 @app.get("/expediente/{caso_id}")
 def ver_expediente(caso_id: str):
     """Expediente único del caso: responsable, fecha, observaciones y documentos,
     con el estado actual y la próxima acción visibles (criterio de HU3)."""
-    return get_or_crear_expediente(caso_id)
+    return data_store.get_or_crear_expediente(caso_id)

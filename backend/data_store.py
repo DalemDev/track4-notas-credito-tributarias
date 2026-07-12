@@ -1,13 +1,18 @@
-import json
 import csv
+import json
 from pathlib import Path
+
+from sqlalchemy import select
+
+from database import Base, SessionLocal, engine
+from db_models import CasoORM, EventoORM, ExpedienteORM
 
 DATA_DIR = Path(__file__).parent / "data"
 
-# --- Carga inicial desde los archivos generados en la etapa de dataset ---
-
-with open(DATA_DIR / "notas_credito_nuevas.json", encoding="utf-8") as f:
-    CASOS_NUEVOS = {c["caso_id"]: c for c in json.load(f)}
+# --- Fuentes de referencia externas simuladas (no son "estado" de la app) ---
+# En un entorno real serían consultas a servicios externos (SRI, historial
+# de la casa de valores), por eso siguen siendo datos estáticos de solo
+# lectura en vez de vivir en la base de datos propia del sistema.
 
 with open(DATA_DIR / "antecedentes_historicos.csv", encoding="utf-8") as f:
     ANTECEDENTES = list(csv.DictReader(f))
@@ -15,31 +20,131 @@ with open(DATA_DIR / "antecedentes_historicos.csv", encoding="utf-8") as f:
 with open(DATA_DIR / "estado_sri_simulado.csv", encoding="utf-8") as f:
     ESTADO_SRI = {row["numero_titulo"]: row for row in csv.DictReader(f)}
 
-# --- Estado mutable en memoria (se reinicia si se reinicia el servidor) ---
-# En un entorno real esto viviría en una base de datos (ej. SQLite/Postgres).
+# --- Estado propio de la aplicación: persistente en SQLite vía SQLAlchemy ---
+# Sobrevive a reinicios del servidor y es consistente sin importar el canal
+# (Streamlit hoy, cualquier otro cliente de la API mañana) que la consuma.
 
-EXPEDIENTES: dict[str, dict] = {}
+Base.metadata.create_all(bind=engine)
+
+
+def _caso_a_dict(caso: CasoORM) -> dict:
+    return {
+        "caso_id": caso.caso_id,
+        "numero_titulo": caso.numero_titulo,
+        "titular": caso.titular,
+        "ruc": caso.ruc,
+        "tipo_nota": caso.tipo_nota,
+        "valor_nominal": caso.valor_nominal,
+        "saldo": caso.saldo,
+        "documento_respaldo": caso.documento_respaldo,
+        "fecha_ingreso": caso.fecha_ingreso,
+    }
+
+
+def listar_casos() -> list[dict]:
+    with SessionLocal() as session:
+        casos = session.scalars(select(CasoORM)).all()
+        return [_caso_a_dict(c) for c in casos]
+
+
+def obtener_caso(caso_id: str) -> dict | None:
+    with SessionLocal() as session:
+        caso = session.get(CasoORM, caso_id)
+        return _caso_a_dict(caso) if caso else None
+
+
+def existe_caso(caso_id: str) -> bool:
+    return obtener_caso(caso_id) is not None
+
+
+def contar_casos_del_anio(anio: int) -> int:
+    with SessionLocal() as session:
+        casos = session.scalars(
+            select(CasoORM).where(CasoORM.caso_id.like(f"NC-{anio}-%"))
+        ).all()
+        return len(casos)
+
+
+def crear_caso(datos: dict) -> dict:
+    with SessionLocal() as session:
+        caso = CasoORM(**datos)
+        session.add(caso)
+        session.add(ExpedienteORM(caso_id=datos["caso_id"], estado="ingresado", datos_confirmados="{}"))
+        session.add(EventoORM(caso_id=datos["caso_id"], evento="caso_ingresado"))
+        session.commit()
+        session.refresh(caso)
+        return _caso_a_dict(caso)
+
+
+def buscar_duplicados_titulo(numero_titulo: str, excluir_caso_id: str) -> list[str]:
+    with SessionLocal() as session:
+        casos = session.scalars(
+            select(CasoORM).where(
+                CasoORM.numero_titulo == numero_titulo,
+                CasoORM.caso_id != excluir_caso_id,
+            )
+        ).all()
+        return [c.caso_id for c in casos]
+
+
+def _expediente_a_dict(expediente: ExpedienteORM, historial: list[dict]) -> dict:
+    return {
+        "caso_id": expediente.caso_id,
+        "estado": expediente.estado,
+        "datos_confirmados": json.loads(expediente.datos_confirmados or "{}"),
+        "alertas": json.loads(expediente.alertas) if expediente.alertas else [],
+        "siguiente_paso": json.loads(expediente.siguiente_paso) if expediente.siguiente_paso else None,
+        "borrador": expediente.borrador,
+        "historial": historial,
+    }
+
+
+def _historial_del_caso(session, caso_id: str) -> list[dict]:
+    eventos = session.scalars(
+        select(EventoORM).where(EventoORM.caso_id == caso_id).order_by(EventoORM.id)
+    ).all()
+    return [
+        {
+            "evento": ev.evento,
+            "detalle": ev.detalle,
+            "fecha": ev.fecha.isoformat() if ev.fecha else None,
+        }
+        for ev in eventos
+    ]
 
 
 def get_or_crear_expediente(caso_id: str) -> dict:
     """Cada caso tiene un expediente único que acumula responsable, fecha,
-    observaciones y documentos a lo largo de HU1 -> HU2 -> HU3 (criterio de HU3)."""
-    if caso_id not in EXPEDIENTES:
-        caso = CASOS_NUEVOS.get(caso_id)
-        EXPEDIENTES[caso_id] = {
-            "caso_id": caso_id,
-            "estado": "ingresado",
-            "datos_confirmados": {},
-            "alertas": [],
-            "siguiente_paso": None,
-            "borrador": None,
-            "historial": [
-                {"evento": "caso_ingresado", "fecha": caso["fecha_ingreso"] if caso else None}
-            ],
-        }
-    return EXPEDIENTES[caso_id]
+    observaciones y documentos a lo largo de HU1 -> HU2 -> HU3 (criterio de HU3).
+    Persistente: no se pierde al reiniciar el servidor."""
+    with SessionLocal() as session:
+        expediente = session.get(ExpedienteORM, caso_id)
+        if not expediente:
+            expediente = ExpedienteORM(caso_id=caso_id, estado="ingresado", datos_confirmados="{}")
+            session.add(expediente)
+            session.add(EventoORM(caso_id=caso_id, evento="caso_ingresado"))
+            session.commit()
+            session.refresh(expediente)
+        historial = _historial_del_caso(session, caso_id)
+        return _expediente_a_dict(expediente, historial)
+
+
+def actualizar_expediente(caso_id: str, **cambios) -> dict:
+    """Persiste cambios sobre el expediente (estado, datos_confirmados,
+    alertas, siguiente_paso, borrador) y devuelve el expediente actualizado."""
+    with SessionLocal() as session:
+        expediente = session.get(ExpedienteORM, caso_id)
+        for campo, valor in cambios.items():
+            if campo in ("datos_confirmados", "alertas", "siguiente_paso"):
+                valor = json.dumps(valor, ensure_ascii=False)
+            setattr(expediente, campo, valor)
+        session.commit()
+        session.refresh(expediente)
+        historial = _historial_del_caso(session, caso_id)
+        return _expediente_a_dict(expediente, historial)
 
 
 def registrar_evento(caso_id: str, evento: str, detalle: str | None = None):
-    exp = get_or_crear_expediente(caso_id)
-    exp["historial"].append({"evento": evento, "detalle": detalle})
+    with SessionLocal() as session:
+        session.add(EventoORM(caso_id=caso_id, evento=evento, detalle=detalle))
+        session.commit()

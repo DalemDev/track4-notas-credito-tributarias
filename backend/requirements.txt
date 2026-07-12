@@ -2,3 +2,5 @@ fastapi==0.115.0
 uvicorn==0.30.6
 anthropic==0.116.0
 python-multipart==0.0.12
+SQLAlchemy==2.0.35
+rapidfuzz==3.10.0

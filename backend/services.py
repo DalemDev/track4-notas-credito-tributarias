@@ -3,9 +3,42 @@ import json
 import base64
 import mimetypes
 import anthropic
-from data_store import ANTECEDENTES, ESTADO_SRI, CASOS_NUEVOS
+from rapidfuzz import fuzz
+import data_store
+from data_store import ANTECEDENTES, ESTADO_SRI
 
 TIPOS_SOPORTADOS = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"}
+
+# Umbral de similitud (0-100, rapidfuzz) para que un antecedente de OTRO
+# titular se considere candidato a "coincidencia aproximada". Por debajo de
+# esto, ni siquiera se recupera para que Claude lo juzgue.
+UMBRAL_SIMILITUD_TITULAR = 82
+MAX_CANDIDATOS_COINCIDENCIA = 5
+
+# Esquema de salida para el juicio de relevancia (RAG): Claude solo puede
+# referirse a candidatos por su índice dentro de la lista ya recuperada por
+# rapidfuzz — nunca puede inventar un antecedente que no fue recuperado. Este
+# es el guardrail anti-alucinación de esta funcionalidad.
+ESQUEMA_COINCIDENCIAS = {
+    "type": "object",
+    "properties": {
+        "coincidencias": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "indice": {"type": "integer", "description": "Índice (0-based) del candidato en la lista proporcionada."},
+                    "es_relevante": {"type": "boolean", "description": "True solo si podría tratarse del mismo titular."},
+                    "razon": {"type": "string", "description": "Explicación breve (una frase) de la decisión."},
+                },
+                "required": ["indice", "es_relevante", "razon"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["coincidencias"],
+    "additionalProperties": False,
+}
 
 # Esquema de salida para la extracción con Claude: usar output_config.format
 # garantiza JSON válido en la respuesta, en vez de confiar en que el modelo
@@ -30,15 +63,99 @@ ESQUEMA_EXTRACCION = {
 # HU1: búsqueda de antecedentes reutilizables por RUC
 # ---------------------------------------------------------------------------
 
-def buscar_antecedentes(ruc: str, numero_titulo: str | None = None) -> list[dict]:
+def buscar_antecedentes(ruc: str, numero_titulo: str | None = None, titular: str | None = None) -> list[dict]:
     """Devuelve cada dato reutilizable con fecha, fuente y estado,
-    tal como pide el criterio de aceptación de HU1. Busca por RUC o por
-    coincidencia con un número de título anterior. No aplica nada:
-    solo sugiere, el operador confirma/edita/rechaza en el siguiente paso."""
-    return [
-        a for a in ANTECEDENTES
+    tal como pide el criterio de aceptación de HU1. Busca por RUC, por
+    coincidencia con un número de título anterior, y por coincidencia
+    aproximada de titular (RAG, ver más abajo). No aplica nada: solo
+    sugiere, el operador confirma/edita/rechaza en el siguiente paso."""
+    exactos = [
+        {**a, "tipo_coincidencia": "exacta"}
+        for a in ANTECEDENTES
         if a["ruc"] == ruc or (numero_titulo and a.get("numero_titulo_anterior") == numero_titulo)
     ]
+    aproximados = buscar_coincidencias_aproximadas(titular, exactos) if titular else []
+    return exactos + aproximados
+
+
+def _candidatos_por_similitud(titular: str, ya_vistos: set[tuple]) -> list[dict]:
+    """Retrieval: preselecciona (con coincidencia difusa, no LLM) antecedentes
+    de OTROS titulares con nombre similar que aún no fueron devueltos como
+    coincidencia exacta — la 'coincidencia relevante' que pide HU1."""
+    candidatos = []
+    for a in ANTECEDENTES:
+        clave = (a["ruc"], a.get("numero_titulo_anterior"), a["dato"])
+        if clave in ya_vistos:
+            continue
+        similitud = fuzz.token_sort_ratio(titular, a["titular"])
+        if similitud >= UMBRAL_SIMILITUD_TITULAR:
+            candidatos.append({**a, "similitud": round(similitud, 1)})
+    candidatos.sort(key=lambda c: c["similitud"], reverse=True)
+    return candidatos[:MAX_CANDIDATOS_COINCIDENCIA]
+
+
+def buscar_coincidencias_aproximadas(titular: str, ya_exactos: list[dict]) -> list[dict]:
+    """RAG con guardrail anti-alucinación para la 'coincidencia relevante' de
+    HU1: primero se RECUPERAN candidatos por coincidencia difusa de nombre
+    (rapidfuzz, determinista, sin LLM), y luego Claude juzga cuáles son
+    realmente relevantes y por qué. Claude solo puede referirse a un
+    candidato por su índice en la lista ya recuperada — si inventa un índice
+    fuera de rango, se descarta sin excepción. Si no hay candidatos o no hay
+    IA disponible, no se muestra nada (nunca se inventa una coincidencia)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    ya_vistos = {(a["ruc"], a.get("numero_titulo_anterior"), a["dato"]) for a in ya_exactos}
+    candidatos = _candidatos_por_similitud(titular, ya_vistos)
+
+    if not candidatos or not api_key:
+        return []
+
+    lista_candidatos = "\n".join(
+        f"{i}. Titular: {c['titular']} | RUC: {c['ruc']} | Dato: {c['dato']} = {c['valor_dato']} | Similitud de nombre: {c['similitud']}%"
+        for i, c in enumerate(candidatos)
+    )
+    prompt = (
+        f"Un operador está ingresando un caso nuevo para el titular '{titular}'.\n"
+        f"Estos son antecedentes de otros titulares con nombre similar, recuperados por coincidencia "
+        f"difusa de texto:\n{lista_candidatos}\n\n"
+        "Para cada candidato, indica si realmente podría tratarse del mismo titular (variación de "
+        "razón social, error de tipeo, abreviatura) o si es solo una coincidencia de nombre "
+        "irrelevante. Responde únicamente sobre los candidatos listados arriba, por su índice."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=800,
+            output_config={"format": {"type": "json_schema", "schema": ESQUEMA_COINCIDENCIAS}},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if response.stop_reason == "refusal":
+            return []
+        texto_respuesta = "".join(b.text for b in response.content if b.type == "text")
+        juicios = json.loads(texto_respuesta)["coincidencias"]
+    except (anthropic.APIError, json.JSONDecodeError, KeyError, TypeError):
+        # La IA no está disponible o falló: no se bloquea el flujo, solo no
+        # se muestran coincidencias aproximadas en este request (las
+        # coincidencias exactas, deterministas, se muestran igual).
+        return []
+
+    resultado = []
+    for juicio in juicios:
+        indice = juicio.get("indice")
+        # Guardrail: solo se acepta un índice que exista en la lista recuperada.
+        if not isinstance(indice, int) or not (0 <= indice < len(candidatos)):
+            continue
+        if not juicio.get("es_relevante"):
+            continue
+        candidato = candidatos[indice]
+        resultado.append({
+            **{k: v for k, v in candidato.items() if k != "similitud"},
+            "tipo_coincidencia": "aproximada",
+            "similitud": candidato["similitud"],
+            "razon": juicio.get("razon", ""),
+        })
+    return resultado
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +163,7 @@ def buscar_antecedentes(ruc: str, numero_titulo: str | None = None) -> list[dict
 # ---------------------------------------------------------------------------
 
 def validar_caso(caso_id: str) -> dict:
-    caso = CASOS_NUEVOS.get(caso_id)
+    caso = data_store.obtener_caso(caso_id)
     if not caso:
         return {"error": "caso no encontrado"}
 
@@ -81,10 +198,7 @@ def validar_caso(caso_id: str) -> dict:
             })
 
     # Regla 5: duplicados por número de título entre casos ya ingresados
-    duplicados = [
-        c["caso_id"] for c in CASOS_NUEVOS.values()
-        if c["numero_titulo"] == caso["numero_titulo"] and c["caso_id"] != caso_id
-    ]
+    duplicados = data_store.buscar_duplicados_titulo(caso["numero_titulo"], caso_id)
     if duplicados:
         alertas.append({
             "tipo": "duplicado",
@@ -121,7 +235,7 @@ def _sugerir_siguiente_paso(alertas: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 def generar_borrador(caso_id: str, datos_confirmados: dict) -> dict:
-    caso = CASOS_NUEVOS.get(caso_id)
+    caso = data_store.obtener_caso(caso_id)
     texto = (
         f"BORRADOR DE FICHA DE NEGOCIACION - {caso['numero_titulo']}\n"
         f"Titular: {caso['titular']} (RUC {caso['ruc']})\n"

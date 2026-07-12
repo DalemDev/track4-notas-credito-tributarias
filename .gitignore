@@ -8,6 +8,8 @@ venv/
 env/
 .env
 .streamlit/secrets.toml
+*.db
+.pytest_cache/
 
 .vscode/
 .idea/
