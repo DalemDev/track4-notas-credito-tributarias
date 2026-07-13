@@ -3,7 +3,7 @@ import uuid
 import streamlit as st
 import requests
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://track4-notas-credito-tributarias.onrender.com"
 
 # Webhook del Chat Trigger del workflow de n8n "Asistente de Ayuda - Validacion
 # Notas de Credito". El asistente vive en n8n; el frontend solo envia la pregunta
