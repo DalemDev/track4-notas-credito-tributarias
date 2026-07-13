@@ -1,8 +1,13 @@
-def test_flujo_completo_hu1_hu2_hu3(client):
+def test_flujo_completo_hu1_hu2_hu3(client, crear_antecedente):
+    ruc = "1791234567033"
+    crear_antecedente(ruc=ruc, dato="cuenta_bancaria", valor_dato="Banco Pichincha - 220456789")
+    crear_antecedente(ruc=ruc, dato="direccion_fiscal", valor_dato="Av. Amazonas N34-50, Quito")
+    crear_antecedente(ruc=ruc, dato="contacto", valor_dato="contabilidad@flujocompleto.com")
+
     # HU1: crear caso
     caso = client.post("/casos", json={
         "titular": "Flujo Completo SA",
-        "ruc": "1791234567001",
+        "ruc": ruc,
         "numero_titulo": "SRI-NC-88231",
         "tipo_nota": "Reintegro IVA exportador",
         "valor_nominal": 45230.50,

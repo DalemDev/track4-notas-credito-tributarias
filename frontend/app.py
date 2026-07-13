@@ -37,6 +37,20 @@ def inyectar_estilos():
             font-family: 'Inter', sans-serif;
         }}
 
+        /* Fuerza la paleta clara sin depender de que el tema activo de Streamlit
+           sea "light" (algunos entornos de despliegue no leen .streamlit/config.toml
+           si el proceso arranca con otro directorio de trabajo, y Streamlit cae
+           entonces a su propio tema por defecto según el navegador del visitante). */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stHeader"],
+        [data-testid="stBottomBlockContainer"],
+        .main {{
+            background-color: #ffffff !important;
+        }}
+        [data-testid="stAppViewContainer"] * {{
+            color: #111827;
+        }}
+
         section[data-testid="stSidebar"] {{
             background-color: {NAVY};
         }}
@@ -53,12 +67,28 @@ def inyectar_estilos():
             color: #E5E7EB !important;
         }}
 
-        /* Asegurar contraste de inputs y selectbox sobre fondo blanco */
-        section[data-testid="stSidebar"] div[data-baseweb="select"] *, 
-        section[data-testid="stSidebar"] div[role="combobox"] *,
+        /* Asegurar contraste de inputs y selectbox: fondo Y texto explícitos,
+           para que sea legible sin importar el tema activo de Streamlit. */
+        section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
+        section[data-testid="stSidebar"] div[role="combobox"],
         section[data-testid="stSidebar"] input,
         section[data-testid="stSidebar"] select,
         section[data-testid="stSidebar"] textarea {{
+            background-color: #ffffff !important;
+            color: #111827 !important;
+        }}
+        section[data-testid="stSidebar"] div[data-baseweb="select"] *,
+        section[data-testid="stSidebar"] div[role="combobox"] * {{
+            color: #111827 !important;
+        }}
+
+        /* El menú desplegable del selectbox se "portaliza" fuera del sidebar
+           (BaseWeb lo monta directo en <body>), así que necesita su propia regla. */
+        div[data-baseweb="popover"] ul[role="listbox"] {{
+            background-color: #ffffff !important;
+        }}
+        div[data-baseweb="popover"] ul[role="listbox"] li,
+        div[data-baseweb="popover"] ul[role="listbox"] li * {{
             color: #111827 !important;
         }}
 

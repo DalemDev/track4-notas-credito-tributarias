@@ -28,11 +28,18 @@ Base.metadata.create_all(bind=engine)
 
 
 def _sembrar_antecedentes_si_vacio():
+    """Siembra antecedentes de ejemplo desde el CSV solo si existe y la tabla
+    está vacía. Si el CSV no está presente (p. ej. se eliminó, o un despliegue
+    con disco no persistente), arranca igual con la tabla vacía en vez de
+    fallar — los antecedentes reales se acumulan con el uso normal."""
+    ruta_csv = DATA_DIR / "antecedentes_historicos.csv"
+    if not ruta_csv.exists():
+        return
     with SessionLocal() as session:
         si_ya_hay_datos = session.scalars(select(AntecedenteORM)).first()
         if si_ya_hay_datos:
             return
-        with open(DATA_DIR / "antecedentes_historicos.csv", encoding="utf-8") as f:
+        with open(ruta_csv, encoding="utf-8") as f:
             filas = list(csv.DictReader(f))
         for fila in filas:
             session.add(AntecedenteORM(**fila))

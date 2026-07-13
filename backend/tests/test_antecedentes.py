@@ -1,7 +1,8 @@
-def test_antecedentes_ruc_conocido(client):
+def test_antecedentes_ruc_conocido(client, crear_antecedente):
+    crear_antecedente(ruc="1791234567011")
     caso = client.post("/casos", json={
         "titular": "Comercial Andina S.A.",
-        "ruc": "1791234567001",  # RUC presente en antecedentes_historicos.csv
+        "ruc": "1791234567011",  # RUC con antecedente sembrado por la fixture
         "numero_titulo": "SRI-NC-TEST-ANTECEDENTES",
         "tipo_nota": "Reintegro IVA exportador",
         "valor_nominal": 100.0,
@@ -10,7 +11,7 @@ def test_antecedentes_ruc_conocido(client):
 
     antecedentes = client.get(f"/casos/{caso['caso_id']}/antecedentes").json()
     assert len(antecedentes) > 0
-    assert all(a["ruc"] == "1791234567001" for a in antecedentes)
+    assert all(a["ruc"] == "1791234567011" for a in antecedentes)
 
 
 def test_antecedentes_ruc_desconocido(client):
@@ -32,10 +33,11 @@ def test_antecedentes_caso_no_encontrado(client):
     assert respuesta.status_code == 404
 
 
-def test_antecedentes_exactos_estan_etiquetados(client):
+def test_antecedentes_exactos_estan_etiquetados(client, crear_antecedente):
+    crear_antecedente(ruc="1791234567022")
     caso = client.post("/casos", json={
         "titular": "Comercial Andina S.A.",
-        "ruc": "1791234567001",
+        "ruc": "1791234567022",
         "numero_titulo": "SRI-NC-TEST-ETIQUETA",
         "tipo_nota": "Reintegro IVA exportador",
         "valor_nominal": 100.0,

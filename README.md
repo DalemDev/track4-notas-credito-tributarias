@@ -16,8 +16,10 @@ Proyecto para el **Hackathon de Agentes Financieros IA — Track 4**.
     - [HU3 — Preparación de negociación y cierre asistido](#hu3--preparación-de-negociación-y-cierre-asistido)
   - [Integración con Claude (Anthropic API)](#integración-con-claude-anthropic-api)
   - [Coincidencias aproximadas (RAG con guardrails)](#coincidencias-aproximadas-rag-con-guardrails)
+  - [Asistente de ayuda (chat vía n8n)](#asistente-de-ayuda-chat-vía-n8n)
   - [Persistencia](#persistencia)
   - [Pruebas automatizadas](#pruebas-automatizadas)
+  - [Despliegue](#despliegue)
   - [Estructura del proyecto](#estructura-del-proyecto)
   - [Cómo levantar el proyecto](#cómo-levantar-el-proyecto)
     - [1. Backend](#1-backend)
@@ -38,21 +40,21 @@ Los operadores que reciben notas de crédito tributarias del SRI reingresan manu
 ```
 ┌──────────────────────┐        HTTP/JSON        ┌───────────────────────┐
 │  Frontend (Streamlit) │ ───────────────────────▶│   Backend (FastAPI)   │
-│  frontend/app.py      │◀─────────────────────── │   backend/main.py     │
-└──────────────────────┘                          └───────────┬───────────┘
-                                                                │
-                                    ┌───────────────────────────┼───────────────────────────┐
-                                    ▼                            ▼                            ▼
-                          SQLite (SQLAlchemy)             CSV simulado                  Anthropic API
-                          casos + expedientes +          (solo lectura)                (Claude Sonnet 5)
-                          antecedentes, persistentes    estado_sri_simulado.csv          extracción de
-                          entre reinicios y canales      — única fuente externa          documentos +
-                          (database.py, db_models.py)    real (el SRI)                  RAG con guardrails
+│  frontend/app.py      │◀─────────────────────── │   desplegado en Render │
+└───────────┬──────────┘                          └───────────┬───────────┘
+            │                                                  │
+            │ HTTP/JSON                        ┌───────────────┼───────────────┐
+            ▼                                   ▼                              ▼
+┌──────────────────────┐              SQLite (SQLAlchemy)             CSV simulado          Anthropic API
+│  n8n (workflow cloud) │              casos + expedientes +          (solo lectura)        (Claude Sonnet 5)
+│  Asistente de ayuda   │              antecedentes, persistentes    estado_sri_simulado    extracción de
+│  (chat flotante)      │              entre reinicios y canales      .csv — única fuente    documentos +
+└──────────────────────┘              (database.py, db_models.py)     externa real (SRI)    RAG con guardrails
 ```
 
-- **Backend**: FastAPI expuesto como servicio REST con endpoints claros y documentados (Swagger en `/docs`), independiente del canal que lo consuma.
-- **Persistencia**: SQLite vía SQLAlchemy — casos, expedientes (con historial con timestamp) y **antecedentes** sobreviven a reinicios del servidor y son consistentes sin importar el canal (hoy Streamlit; cualquier otro cliente de la misma API mañana). Solo `estado_sri_simulado.csv` se mantiene como dato externo de solo lectura (representa al SRI, un sistema fuera de esta aplicación) — los antecedentes históricos son propiedad de la organización, así que viven en la base de datos.
-- **Frontend**: Streamlit, una sola página con un stepper visual que refleja el estado real del backend.
+- **Backend**: FastAPI expuesto como servicio REST con endpoints claros y documentados (Swagger en `/docs`), independiente del canal que lo consuma. Desplegado en Render (ver [Despliegue](#despliegue)).
+- **Persistencia**: SQLite vía SQLAlchemy — casos, expedientes (con historial con timestamp) y **antecedentes** sobreviven a reinicios del servidor y son consistentes sin importar el canal (hoy Streamlit; cualquier otro cliente de la misma API mañana). Solo `estado_sri_simulado.csv` se mantiene como dato externo de solo lectura (representa al SRI, un sistema fuera de esta aplicación) — los antecedentes históricos ya no se siembran desde un CSV, viven exclusivamente en la base de datos (ver [Persistencia](#persistencia)).
+- **Frontend**: Streamlit, layout de dos columnas con un stepper vertical (paso actual resaltado) que refleja el estado real del backend, más un asistente de ayuda flotante (chat) integrado con un workflow externo de n8n — ver [Asistente de ayuda](#asistente-de-ayuda-chat-vía-n8n).
 - **IA**: SDK oficial `anthropic`. Dos usos concretos, ambos con guardrails explícitos contra alucinación — ver [Integración con Claude](#integración-con-claude-anthropic-api) y [RAG](#coincidencias-aproximadas-rag-con-guardrails).
 - **Calidad**: suite de pruebas automatizadas con `pytest` sobre una base de datos aislada (ver [Pruebas automatizadas](#pruebas-automatizadas)).
 
@@ -81,7 +83,7 @@ Los operadores que reciben notas de crédito tributarias del SRI reingresan manu
 - El documento cargado (PDF o imagen) se envía directamente a Claude como bloque `document`/`image` en base64 — no hay paso de OCR separado.
 - La respuesta se fuerza a un JSON Schema fijo vía `output_config` (*structured outputs*), lo que garantiza una respuesta siempre parseable en vez de depender de que el modelo "obedezca" una instrucción de texto — este es el primer guardrail anti-alucinación del sistema.
 - Manejo explícito de errores: clave no configurada, conexión fallida, límite de solicitudes, error de la API y rechazo del modelo (`stop_reason == "refusal"`).
-- Requiere la variable de entorno `ANTHROPIC_API_KEY` (ver instrucciones en [`backend/README.md`](backend/README.md)).
+- Requiere la variable de entorno `ANTHROPIC_API_KEY` (ver [Cómo levantar el proyecto](#cómo-levantar-el-proyecto)).
 
 ## Coincidencias aproximadas (RAG con guardrails)
 
@@ -93,11 +95,20 @@ Para la "coincidencia relevante" que pide HU1 (más allá del match exacto de RU
 
 Sin candidatos recuperados, o sin `ANTHROPIC_API_KEY`, el sistema simplemente no muestra coincidencias aproximadas — las exactas (100% deterministas) se siguen mostrando de todas formas. El frontend distingue visualmente ambos tipos de coincidencia.
 
+## Asistente de ayuda (chat vía n8n)
+
+Además del flujo principal, el frontend incluye un botón flotante (FAB) en la esquina inferior derecha, visible en cualquier paso, que abre un chat de ayuda para el operador (ej. "¿qué significa esta alerta?", "¿qué debo hacer en este paso?").
+
+- Este asistente **no llama al backend propio**: envía la pregunta del operador junto con el contexto del caso actual (`st.session_state["contexto_asistente"]`) a un **webhook externo de n8n** (`N8N_CHAT_URL` en `frontend/app.py`), que dispara un workflow ("Asistente de Ayuda - Validación Notas de Crédito") corriendo en n8n Cloud.
+- Cada sesión de chat mantiene su propio `session_id` (UUID) para que n8n pueda conservar memoria de la conversación.
+- Es un punto de integración deliberadamente separado del núcleo del producto: si el webhook de n8n falla o no responde, el chat muestra un error pero **no interrumpe** el flujo de ingreso/validación/negociación del caso.
+- Es un dato de configuración operativa (no un secreto), pero al ser una URL externa fuera de este repositorio, su disponibilidad depende de que el workflow siga activo en la cuenta de n8n Cloud donde se creó.
+
 ## Persistencia
 
 Casos, expedientes y **antecedentes históricos** viven en **SQLite vía SQLAlchemy**, no en memoria — sobreviven a reinicios del servidor y son consistentes para cualquier canal que consuma esta misma API (hoy el frontend Streamlit; cualquier otro cliente HTTP mañana vería el mismo estado). El historial de cada expediente queda registrado con marca de tiempo real por evento, no solo en memoria de proceso.
 
-Solo `estado_sri_simulado.csv` sigue siendo un archivo de solo lectura — representa una fuente externa (el SRI), no algo que la aplicación posea. `antecedentes_historicos.csv`, en cambio, ya no se lee en tiempo de ejecución: es el propio historial de la organización, así que se migra a la base de datos una única vez al arrancar por primera vez (semilla inicial); de ahí en adelante, la base de datos es la única fuente de verdad. Detalle técnico en [`backend/README.md`](backend/README.md#persistencia).
+Solo `estado_sri_simulado.csv` sigue siendo un archivo de solo lectura — representa una fuente externa (el SRI), no algo que la aplicación posea. El CSV de semilla de antecedentes (`antecedentes_historicos.csv`) fue **eliminado del repositorio**: `data_store.py` ya no depende de él para arrancar (si no existe, simplemente arranca con la tabla vacía en vez de fallar) y los antecedentes reales se acumulan exclusivamente con el uso normal de la aplicación. Ver la nota sobre esto en [Limitaciones conocidas](#limitaciones-conocidas).
 
 ## Pruebas automatizadas
 
@@ -109,6 +120,20 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
+## Despliegue
+
+El backend está desplegado en **Render** y corre en producción de forma independiente del frontend:
+
+- `backend/runtime.txt` fija la versión de Python (`python-3.11.9`) que usa Render para el build.
+- El frontend (`frontend/app.py`) apunta por defecto a esa URL de Render (`API_URL`), así que el flujo completo funciona de punta a punta sin correr nada localmente (ver [Cómo levantar el proyecto](#cómo-levantar-el-proyecto) para apuntar a un backend local en su lugar).
+- El plan gratuito de Render "duerme" la instancia tras inactividad — la primera petición después de un rato puede tardar unos segundos en responder mientras el servicio despierta.
+- El disco de Render no es persistente entre despliegues: `sri_notas.db` (SQLite) se reinicia cuando se re-despliega el servicio.
+
+El frontend está desplegado en **Streamlit Community Cloud** que es una opción nativa de streamlit para desplegar aplicaciones.
+
+*Link frontend:* https://track4-notas-credito-tributarias-efte8cvk5nhy2nctzxjn94.streamlit.app/
+*Link backend:* https://track4-notas-credito-tributarias.onrender.com/docs
+
 ## Estructura del proyecto
 
 ```
@@ -118,24 +143,25 @@ track4_proyecto/
 │   ├── services.py             # Lógica de negocio + integración con Claude (extracción y RAG)
 │   ├── models.py                # Modelos Pydantic de request/response
 │   ├── database.py              # Engine y sesión de SQLAlchemy
-│   ├── db_models.py             # Modelos ORM (Caso, Expediente, Evento)
-│   ├── data_store.py            # Capa de acceso a datos (persistente) + semilla inicial de antecedentes
-│   ├── data/                     # estado_sri_simulado.csv (fuente externa) + antecedentes_historicos.csv (solo semilla inicial)
+│   ├── db_models.py             # Modelos ORM (Caso, Expediente, Evento, Antecedente)
+│   ├── data_store.py            # Capa de acceso a datos (persistente)
+│   ├── data/                     # estado_sri_simulado.csv — única fuente externa simulada (SRI)
 │   ├── tests/                    # Suite de pruebas automatizadas (pytest)
 │   ├── requirements.txt
 │   ├── requirements-dev.txt      # + pytest, httpx (solo para pruebas)
-│   └── README.md                 # Instrucciones detalladas del backend
+│   └── runtime.txt               # Versión de Python fijada para el despliegue en Render
 ├── frontend/
-│   ├── app.py                    # UI Streamlit (stepper, creación de caso, HU1-HU3)
+│   ├── app.py                    # UI Streamlit (stepper vertical, asistente de ayuda, HU1-HU3)
 │   ├── .streamlit/config.toml    # Tema claro forzado
-│   ├── requirements.txt
-│   └── README.md                 # Instrucciones detalladas del frontend
+│   └── requirements.txt
 ├── nota_credito_prueba.png       # Imagen de prueba sintética para la extracción
 ├── nota_credito_prueba2.png      # Imagen de prueba real (nota de crédito SRI)
 └── README.md                     # Este archivo
 ```
 
 ## Cómo levantar el proyecto
+
+Por defecto, `frontend/app.py` apunta al backend ya desplegado en Render (`API_URL` al inicio del archivo), así que basta con levantar el frontend para probar el flujo completo. Para desarrollar o probar contra un backend local, sigue ambos pasos y cambia `API_URL` a `http://127.0.0.1:8000`.
 
 ### 1. Backend
 
@@ -158,7 +184,7 @@ cd frontend
 pip install -r requirements.txt
 streamlit run app.py o python -m streamlit run app.py
 ```
-Frontend disponible en `http://localhost:8501`.
+Frontend disponible en `http://localhost:8501`. Si quieres apuntarlo a tu backend local en vez de Render, edita `API_URL` en `frontend/app.py` antes de correrlo.
 
 ## Flujo de demo sugerido
 
