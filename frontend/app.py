@@ -47,8 +47,36 @@ def inyectar_estilos():
         .main {{
             background-color: #ffffff !important;
         }}
-        [data-testid="stAppViewContainer"] * {{
+
+        /* Texto por defecto del área principal (nunca el sidebar, que ya tiene
+           su propio contraste explícito, ni los botones, que definen su propio
+           par fondo/texto justo abajo — si no se excluyen, un botón con fondo
+           oscuro terminaría con texto oscuro encima, ilegible). */
+        .main p,
+        .main span,
+        .main label,
+        .main li,
+        .main h1, .main h2, .main h3, .main h4, .main h5, .main h6,
+        .main [data-testid="stMarkdownContainer"] {{
             color: #111827;
+        }}
+
+        /* Botones del área principal: fondo Y texto explícitos por tipo, para
+           que sean legibles sin importar el tema activo de Streamlit. */
+        .main button[kind="primary"] {{
+            background-color: {NAVY} !important;
+        }}
+        .main button[kind="primary"],
+        .main button[kind="primary"] * {{
+            color: #ffffff !important;
+        }}
+        .main button:not([kind="primary"]):not([kind="header"]) {{
+            background-color: #ffffff !important;
+            border: 1px solid #D1D5DB !important;
+        }}
+        .main button:not([kind="primary"]):not([kind="header"]),
+        .main button:not([kind="primary"]):not([kind="header"]) * {{
+            color: #111827 !important;
         }}
 
         section[data-testid="stSidebar"] {{
