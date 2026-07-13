@@ -6,17 +6,23 @@ Proyecto para el **Hackathon de Agentes Financieros IA — Track 4**.
 
 ## Índice
 
-- [Problema que resuelve](#problema-que-resuelve)
-- [Arquitectura](#arquitectura)
-- [Funcionalidades por historia de usuario](#funcionalidades-por-historia-de-usuario)
-- [Integración con Claude (Anthropic API)](#integración-con-claude-anthropic-api)
-- [Coincidencias aproximadas (RAG con guardrails)](#coincidencias-aproximadas-rag-con-guardrails)
-- [Persistencia](#persistencia)
-- [Pruebas automatizadas](#pruebas-automatizadas)
-- [Estructura del proyecto](#estructura-del-proyecto)
-- [Cómo levantar el proyecto](#cómo-levantar-el-proyecto)
-- [Flujo de demo sugerido](#flujo-de-demo-sugerido)
-- [Limitaciones conocidas](#limitaciones-conocidas)
+- [Track 4 — Asistente de Notas de Crédito Tributarias](#track-4--asistente-de-notas-de-crédito-tributarias)
+  - [Índice](#índice)
+  - [Problema que resuelve](#problema-que-resuelve)
+  - [Arquitectura](#arquitectura)
+  - [Funcionalidades por historia de usuario](#funcionalidades-por-historia-de-usuario)
+    - [HU1 — Ingreso asistido y reutilización de antecedentes](#hu1--ingreso-asistido-y-reutilización-de-antecedentes)
+    - [HU2 — Validación y siguiente acción guiada](#hu2--validación-y-siguiente-acción-guiada)
+    - [HU3 — Preparación de negociación y cierre asistido](#hu3--preparación-de-negociación-y-cierre-asistido)
+  - [Integración con Claude (Anthropic API)](#integración-con-claude-anthropic-api)
+  - [Coincidencias aproximadas (RAG con guardrails)](#coincidencias-aproximadas-rag-con-guardrails)
+  - [Persistencia](#persistencia)
+  - [Pruebas automatizadas](#pruebas-automatizadas)
+  - [Estructura del proyecto](#estructura-del-proyecto)
+  - [Cómo levantar el proyecto](#cómo-levantar-el-proyecto)
+    - [1. Backend](#1-backend)
+    - [2. Frontend](#2-frontend)
+  - [Flujo de demo sugerido](#flujo-de-demo-sugerido)
 
 ## Problema que resuelve
 
@@ -141,7 +147,7 @@ pip install -r requirements.txt
 export ANTHROPIC_API_KEY=tu_clave        # macOS/Linux
 $env:ANTHROPIC_API_KEY = "tu_clave"      # Windows PowerShell
 
-uvicorn main:app --reload
+uvicorn main:app --reload o python -m uvicorn main:app --reload
 ```
 Backend disponible en `http://127.0.0.1:8000` (Swagger UI en `/docs`). Crea `sri_notas.db` automáticamente en el primer arranque.
 
@@ -150,11 +156,9 @@ Backend disponible en `http://127.0.0.1:8000` (Swagger UI en `/docs`). Crea `sri
 ```bash
 cd frontend
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run app.py o python -m streamlit run app.py
 ```
 Frontend disponible en `http://localhost:8501`.
-
-Más detalle en [`backend/README.md`](backend/README.md) y [`frontend/README.md`](frontend/README.md).
 
 ## Flujo de demo sugerido
 
@@ -166,10 +170,3 @@ Más detalle en [`backend/README.md`](backend/README.md) y [`frontend/README.md`
 6. **Paso 3**: genera el borrador de negociación y apruébalo con tu nombre.
 7. Revisa el expediente único al final de la página, con el historial completo del caso.
 8. Reinicia el backend (`Ctrl+C` y vuelve a correr `uvicorn`) y confirma que el caso sigue existiendo — la persistencia es real.
-
-## Limitaciones conocidas
-
-- **Fuente SRI simulada**: `estado_sri_simulado.csv` no conoce números de título fuera de su dataset — un caso nuevo casi siempre generará la alerta "no encontrado en la fuente SRI simulada", lo cual es esperado en esta demo.
-- **Sin autenticación**: cualquiera que acceda a la API puede operar sobre cualquier caso — aceptable para el alcance de esta demo, no para producción.
-- **RAG de alcance acotado**: la coincidencia aproximada solo compara nombre de titular vía `rapidfuzz` + juicio de Claude; no es una búsqueda semántica vectorial sobre un corpus grande — deliberadamente simple dado el tamaño del dataset de antecedentes.
-- **Sin pruebas de carga formales**: la suite de `pytest` cubre corrección funcional, no throughput/latencia bajo concurrencia.
