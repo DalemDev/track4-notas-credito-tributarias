@@ -2,7 +2,7 @@
 
 Asistente inteligente para operadores que reciben e ingresan notas de crédito tributarias del SRI (Ecuador). Reutiliza antecedentes ya validados, extrae datos directamente de documentos cargados (PDF/imagen) con IA, detecta errores contra la fuente del SRI y guía los siguientes pasos hasta la negociación y el cierre — siempre con aprobación humana explícita.
 
-Proyecto para el **Hackathon de Agentes Financieros IA — Track 4 - Agentic Scale by TAWS**.
+Proyecto para el **Hackathon de Agentes Financieros IA — Track 4 — Agentic Scale by TAWS**.
 
 ## Índice
 
